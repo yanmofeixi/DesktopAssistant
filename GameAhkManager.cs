@@ -41,6 +41,9 @@ namespace DesktopAssistant
             Logger.Info($"轮询间隔: {pollIntervalMs}ms");
             Logger.Info($"监控的游戏: {string.Join(", ", gameAhkMapping.Keys)}");
             
+            // 先同步已有的 AHK 进程（程序重启后恢复状态）
+            SyncExistingAhkProcesses();
+            
             // 立即检查一次当前运行的游戏
             CheckAndSyncGameStatus();
 
@@ -96,6 +99,78 @@ namespace DesktopAssistant
             }
             
             Logger.Debug($"游戏状态检查完成");
+        }
+
+        /// <summary>
+        /// 同步已有的 AHK 进程到 runningGames 字典
+        /// 用于程序重启后恢复对已运行 AHK 的追踪
+        /// </summary>
+        private void SyncExistingAhkProcesses()
+        {
+            Logger.Info("开始同步已有的 AHK 进程...");
+            
+            foreach (var kvp in gameAhkMapping)
+            {
+                var gameName = kvp.Key;
+                var ahkScript = kvp.Value;
+                
+                // 如果已经在追踪中，跳过
+                if (runningGames.ContainsKey(gameName)) continue;
+                
+                // 检查是否有对应的 AHK 进程在运行
+                if (IsAhkScriptRunning(ahkScript))
+                {
+                    Logger.Info($"检测到已有 AHK 进程: {ahkScript}，加入追踪列表");
+                    // 用 null 标记，表示这是外部启动的进程，需要通过命令行匹配关闭
+                    runningGames[gameName] = null;
+                }
+            }
+            
+            Logger.Info($"AHK 进程同步完成，当前追踪: {string.Join(", ", runningGames.Keys)}");
+        }
+
+        /// <summary>
+        /// 检查指定的 AHK 脚本是否在当前用户 Session 中运行
+        /// </summary>
+        private bool IsAhkScriptRunning(string ahkScript)
+        {
+            var scriptPath = Path.Combine(ahkFolder, ahkScript);
+            var ahkProcessNames = new[] { "AutoHotkey", "AutoHotkeyUX", "AutoHotkey64", "AutoHotkey32" };
+            
+            foreach (var processName in ahkProcessNames)
+            {
+                try
+                {
+                    var processes = Process.GetProcessesByName(processName);
+                    foreach (var process in processes)
+                    {
+                        try
+                        {
+                            if (process.SessionId != currentSessionId) continue;
+                            
+                            using var searcher = new ManagementObjectSearcher(
+                                $"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {process.Id}");
+                            
+                            foreach (ManagementObject obj in searcher.Get())
+                            {
+                                var commandLine = obj["CommandLine"]?.ToString() ?? "";
+                                if (commandLine.Contains(ahkScript, StringComparison.OrdinalIgnoreCase) ||
+                                    commandLine.Contains(scriptPath, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                        catch { }
+                        finally
+                        {
+                            process.Dispose();
+                        }
+                    }
+                }
+                catch { }
+            }
+            return false;
         }
 
         /// <summary>
@@ -196,30 +271,14 @@ namespace DesktopAssistant
                 return;
             }
 
-            try
-            {
-                // 优先使用保存的进程对象来关闭
-                if (ahkProcess != null && !ahkProcess.HasExited)
-                {
-                    Logger.Info($"停止 AHK 脚本 (PID={ahkProcess.Id}): {ahkScript}");
-                    ahkProcess.Kill();
-                    ahkProcess.Dispose();
-                    Logger.Info($"AHK 脚本已停止");
-                }
-                else
-                {
-                    Logger.Info($"AHK 进程对象不可用，使用备用方案关闭: {ahkScript}");
-                    // 备用方案：通过命令行参数匹配关闭（适用于程序重启后）
-                    KillAhkByCommandLine(ahkScript);
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Warn($"直接关闭 AHK 失败: {ex.Message}，尝试备用方案");
-                // 如果直接关闭失败，尝试备用方案
-                try { KillAhkByCommandLine(ahkScript); } catch { }
-            }
+            // AHK v2 使用 launcher 机制，Process.Start 返回的是 launcher 进程
+            // launcher 启动脚本后就退出，实际脚本运行在另一个进程中
+            // 因此总是使用命令行匹配方式关闭
+            Logger.Info($"停止 AHK 脚本: {ahkScript}");
+            KillAhkByCommandLine(ahkScript);
             
+            // 清理保存的 Process 对象
+            ahkProcess?.Dispose();
             runningGames.Remove(gameName);
         }
 

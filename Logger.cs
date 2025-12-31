@@ -15,7 +15,26 @@ namespace DesktopAssistant
         static Logger()
         {
             Directory.CreateDirectory(logFolder);
+            
+            // 删除所有旧的日志文件，只保留当前 session 的日志
+            CleanOldLogs();
+            
             currentLogFile = Path.Combine(logFolder, $"log_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
+        }
+
+        /// <summary>
+        /// 删除所有旧的日志文件
+        /// </summary>
+        private static void CleanOldLogs()
+        {
+            try
+            {
+                foreach (var file in Directory.GetFiles(logFolder, "log_*.txt"))
+                {
+                    try { File.Delete(file); } catch { }
+                }
+            }
+            catch { }
         }
 
         /// <summary>
