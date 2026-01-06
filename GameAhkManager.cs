@@ -19,7 +19,8 @@ namespace DesktopAssistant
         private static readonly Dictionary<string, string> gameAhkMapping = new()
         {
             { "GenshinImpact", "Genshin.ahk" },
-            { "StarRail", "StarRail.ahk" }
+            { "StarRail", "StarRail.ahk" },
+            { "isaac-ng", "Isaac.ahk" }
         };
 
         // 记录哪些游戏的AHK已启动，存储游戏名到对应AHK进程的映射
