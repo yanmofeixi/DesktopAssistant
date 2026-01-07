@@ -36,13 +36,8 @@ DesktopAssistant/
 ## 开发与发布
 
 ```powershell
-# 发布（依赖框架模式，需要 .NET 8）
 dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o ./publish
 ```
-
-## 开机自启
-
-快捷方式：`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\DesktopAssistant.lnk`
 
 ## 热键
 
@@ -65,6 +60,3 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 - System.Management（进程监控）
 - System.Text.Json
 
-## 相关项目
-
-手机远程控制显示器：[LocalWebsite](../LocalWebsite)
