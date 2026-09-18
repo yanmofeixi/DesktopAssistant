@@ -12,8 +12,13 @@ namespace DesktopAssistant
         private static HotkeyManager? hotkeyManager;
         private static ReminderManager? reminderManager;
         private static GameAhkManager? gameAhkManager;
+        private static IdleMuteManager? idleMuteManager;
+        private static ScreenshotManager? screenshotManager;
+        private static RemoteInputServer? remoteInputServer;
         private static ToolStripMenuItem? startProxyMenuItem;
         private static ToolStripMenuItem? stopProxyMenuItem;
+        private static ToolStripMenuItem? idleMuteMenuItem;
+        private static ToolStripMenuItem? remoteInputMenuItem;
 
         private static readonly Form contextMenuOwner = new()
 
@@ -42,10 +47,16 @@ namespace DesktopAssistant
             hotkeyManager = new HotkeyManager();
             reminderManager = new ReminderManager();
             gameAhkManager = new GameAhkManager();
+            idleMuteManager = new IdleMuteManager();
+            screenshotManager = new ScreenshotManager();
+            remoteInputServer = new RemoteInputServer(screenshotManager);
             
             hotkeyManager.Start();
             reminderManager.Start();
             gameAhkManager.Start();
+            idleMuteManager.Start();
+            screenshotManager.Start();
+            remoteInputServer.Start();
             SetUpTrayIcon();
             Application.Run();
         }
@@ -53,6 +64,17 @@ namespace DesktopAssistant
         private static void SetUpTrayIcon()
         {
             menu.Items.Add("关闭显示器", null, (_, _) => DisplayManager.TurnOff());
+            
+            idleMuteMenuItem = new ToolStripMenuItem("空闲自动静音 (30分钟)", null, (_, _) => ToggleIdleMute());
+            idleMuteMenuItem.Checked = true;
+            menu.Items.Add(idleMuteMenuItem);
+
+            menu.Items.Add("打开截图文件夹", null, (_, _) => ScreenshotManager.OpenScreenshotFolder());
+
+            remoteInputMenuItem = new ToolStripMenuItem($"远程控制服务 (端口 {RemoteInputServer.DefaultPort})", null, (_, _) => ToggleRemoteInput());
+            remoteInputMenuItem.Checked = true;
+            menu.Items.Add(remoteInputMenuItem);
+            
             menu.Items.Add("-");
 
             startProxyMenuItem = new ToolStripMenuItem("启动全局抓包代理", null, (_, _) => SetProxyState(true));
@@ -69,7 +91,7 @@ namespace DesktopAssistant
             menu.Items.Add("-");
             menu.Items.Add("启动实时翻译", null, (_, _) => StartRealtimeSubtitle());
             menu.Items.Add("-");
-            menu.Items.Add("退出", null, (_, _) => { icon.Visible = false; hotkeyManager?.Stop(); gameAhkManager?.Stop(); Application.Exit(); });
+            menu.Items.Add("退出", null, (_, _) => { icon.Visible = false; hotkeyManager?.Stop(); gameAhkManager?.Stop(); idleMuteManager?.Stop(); screenshotManager?.Stop(); remoteInputServer?.Stop(); Application.Exit(); });
 
             icon.MouseUp += (s, e) =>
             {
@@ -81,6 +103,32 @@ namespace DesktopAssistant
                     menu.Show(Cursor.Position);
                 }
             };
+        }
+
+        private static void ToggleRemoteInput()
+        {
+            if (remoteInputServer != null && remoteInputMenuItem != null)
+            {
+                if (remoteInputServer.IsRunning)
+                {
+                    remoteInputServer.Stop();
+                    remoteInputMenuItem.Checked = false;
+                }
+                else
+                {
+                    remoteInputServer.Start();
+                    remoteInputMenuItem.Checked = remoteInputServer.IsRunning;
+                }
+            }
+        }
+
+        private static void ToggleIdleMute()
+        {
+            if (idleMuteManager != null && idleMuteMenuItem != null)
+            {
+                idleMuteManager.Enabled = !idleMuteManager.Enabled;
+                idleMuteMenuItem.Checked = idleMuteManager.Enabled;
+            }
         }
 
         private static void UpdateProxyMenuVisibility()
