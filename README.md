@@ -1,6 +1,6 @@
 # DesktopAssistant
 
-Windows 系统托盘工具：显示器控制 + 游戏AHK自动启动 + 热键管理 + 定时提醒
+Windows 系统托盘工具：显示器控制 + 游戏AHK自动启动 + 定时提醒
 
 ## 功能
 
@@ -8,7 +8,7 @@ Windows 系统托盘工具：显示器控制 + 游戏AHK自动启动 + 热键管
 |------|------|
 | **显示器控制** | 托盘菜单一键关闭/开启显示器 |
 | **游戏AHK自动启动** | 检测游戏启动后自动运行对应AHK脚本 |
-| **热键管理** | Against the Storm 存档快捷键（Ctrl+1/2/3） |
+| **书房壁灯快捷键** | 全局 `Ctrl+F1`：切换二楼书房壁灯，开灯亮度固定为 100% |
 | **提醒功能** | 读取桌面 ToDo.json，定时弹窗提醒 |
 | **空闲自动静音** | 检测到系统空闲 30 分钟自动静音，恢复操作后自动取消静音（可通过托盘菜单启用/禁用） |
 | **屏幕截图与远程控制** | 内置轻量 HTTP 服务（端口 18888），支持 SSH 快捷命令进行全屏/窗口截图、鼠标点击/拖拽/滚轮、长文本快速粘贴、Unicode 逐键输入与快捷键 |
@@ -66,7 +66,7 @@ DesktopAssistant/
  Program.cs           # 入口，托盘图标与菜单
  DisplayManager.cs    # 显示器开关（Windows API）
  GameAhkManager.cs    # 游戏进程监控，自动启动AHK
- HotkeyManager.cs     # 全局热键（Ctrl+1/2/3）
+ StudyLightHotkey.cs  # Ctrl+F1 经 Home Assistant 控制二楼书房壁灯
  ReminderManager.cs   # ToDo.json 定时提醒
  IdleMuteManager.cs   # 空闲自动静音（Win32 + Core Audio API）
  ScreenshotManager.cs # 全屏/窗口截图、坐标元数据与旧图自动清理
@@ -85,13 +85,17 @@ DesktopAssistant/
 dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o ./publish
 ```
 
-## 热键
+## 书房壁灯快捷键
 
-| 热键 | 功能 | 条件 |
-|------|------|------|
-| `Ctrl+1` | 保存存档到 SL 文件夹 | Against the Storm 窗口激活时 |
-| `Ctrl+2` | 从 SL 文件夹读取存档 | Against the Storm 窗口激活时 |
-| `Ctrl+3` | 从备份恢复存档 | Against the Storm 窗口激活时 |
+全局 `Ctrl+F1` 调用 Home Assistant 专用 webhook。HA 根据实体
+`light.jim_s_office_jim_s_offc_wall_sconces` 的实际状态判断：亮着时关闭，关着时以
+`brightness_pct: 100` 打开；状态不可用时不执行。长按不会重复触发，请求进行中和随后
+500 毫秒内忽略重复按键；网络失败不会自动重试，避免重复切换。
+
+连接配置位于 `%LOCALAPPDATA%\DesktopAssistant\HomeAssistant.json`，包含 `WebhookUrl`
+字符串。该 URL 含专用随机标识，应只保存在用户配置中，不提交到源码或写入日志。
+HA 自动化 `windows_ctrl_f1_study_wall_light` 仅接受本地 POST 请求，且只控制这一盏灯。
+注册冲突、配置错误或网络错误通过托盘通知和日志报告；HTTP 成功仅表示 HA 收到请求。
 
 ## ToDo.json 格式
 

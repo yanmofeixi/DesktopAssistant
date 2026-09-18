@@ -9,12 +9,12 @@ namespace DesktopAssistant
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
 
-        private static HotkeyManager? hotkeyManager;
         private static ReminderManager? reminderManager;
         private static GameAhkManager? gameAhkManager;
         private static IdleMuteManager? idleMuteManager;
         private static ScreenshotManager? screenshotManager;
         private static RemoteInputServer? remoteInputServer;
+        private static StudyLightHotkey? studyLightHotkey;
         private static ToolStripMenuItem? startProxyMenuItem;
         private static ToolStripMenuItem? stopProxyMenuItem;
         private static ToolStripMenuItem? idleMuteMenuItem;
@@ -44,19 +44,21 @@ namespace DesktopAssistant
 
         private static void Main()
         {
-            hotkeyManager = new HotkeyManager();
             reminderManager = new ReminderManager();
             gameAhkManager = new GameAhkManager();
             idleMuteManager = new IdleMuteManager();
             screenshotManager = new ScreenshotManager();
             remoteInputServer = new RemoteInputServer(screenshotManager);
+            studyLightHotkey = new StudyLightHotkey();
+            studyLightHotkey.Error += message =>
+                icon.ShowBalloonTip(5000, "二楼书房壁灯", message, ToolTipIcon.Warning);
             
-            hotkeyManager.Start();
             reminderManager.Start();
             gameAhkManager.Start();
             idleMuteManager.Start();
             screenshotManager.Start();
             remoteInputServer.Start();
+            studyLightHotkey.Start();
             SetUpTrayIcon();
             Application.Run();
         }
@@ -91,7 +93,7 @@ namespace DesktopAssistant
             menu.Items.Add("-");
             menu.Items.Add("启动实时翻译", null, (_, _) => StartRealtimeSubtitle());
             menu.Items.Add("-");
-            menu.Items.Add("退出", null, (_, _) => { icon.Visible = false; hotkeyManager?.Stop(); gameAhkManager?.Stop(); idleMuteManager?.Stop(); screenshotManager?.Stop(); remoteInputServer?.Stop(); Application.Exit(); });
+            menu.Items.Add("退出", null, (_, _) => { icon.Visible = false; studyLightHotkey?.Dispose(); gameAhkManager?.Stop(); idleMuteManager?.Stop(); screenshotManager?.Stop(); remoteInputServer?.Stop(); Application.Exit(); });
 
             icon.MouseUp += (s, e) =>
             {
