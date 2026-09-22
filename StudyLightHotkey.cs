@@ -40,6 +40,8 @@ public sealed class StudyLightHotkey : Form
             var path = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "DesktopAssistant", "HomeAssistant.json");
+            // This integration is optional on a newly provisioned computer.
+            if (!File.Exists(path)) return;
             using var config = JsonDocument.Parse(File.ReadAllText(path));
             var url = config.RootElement.GetProperty("WebhookUrl").GetString();
             if (!Uri.TryCreate(url, UriKind.Absolute, out webhookUrl)

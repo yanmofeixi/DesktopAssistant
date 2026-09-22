@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\ScreenshotManager.cs" Link="ScreenshotManager.cs" />
+    <Compile Include="..\..\RemoteInputServer.cs" Link="RemoteInputServer.cs" />
+    <Compile Include="..\..\WindowCapture.cs" Link="WindowCapture.cs" />
+  </ItemGroup>
+</Project>

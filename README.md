@@ -30,7 +30,7 @@ Mac 运行 `ssh -t windows-desktop powershell.exe -NoLogo`。Windows PowerShell 
 | 逐字模拟按键（按需） | `t '你好 "Windows" 世界'` |
 | 按键 / 组合键 | `k enter` / `k ctrl+w` / `k alt+tab` |
 
-`shot` 返回截图文件路径和 `left`、`top`、`width`、`height`。窗口截图坐标 `(x,y)` 对应桌面坐标 `(left+x, top+y)`，鼠标命令始终使用桌面坐标。截图文件在 `D:\Temp\ScreenshotMonitoring`，只保留最新 10 张；使用 Mac `scp` 按返回路径下载。
+`shot` 返回截图文件路径和 `left`、`top`、`width`、`height`。窗口截图坐标 `(x,y)` 对应桌面坐标 `(left+x, top+y)`，鼠标命令始终使用桌面坐标。截图文件在 `%LOCALAPPDATA%\DesktopAssistant\Screenshots`，只保留最新 10 张；使用 Mac `scp` 按返回路径下载。
 
 窗口选择按 `active`、十六进制句柄、程序名（可带 `.exe`）、完整标题、标题片段匹配。多个窗口匹配时返回候选列表并要求选择句柄；找不到、已最小化或完全移出屏幕时明确报错。窗口截图截取该窗口在屏幕上的可见矩形，不激活窗口，遮挡内容仍会出现在截图中。
 
@@ -51,6 +51,12 @@ ssh -T windows-desktop 'curl.exe --silent --show-error --fail-with-body -H "Cont
 快速输入 API 为 `POST /paste`，请求体是 `text/plain; charset=utf-8` 原文；成功返回 `status`、`action: paste` 和 UTF-16 长度 `length`，表示已发送粘贴操作，目标程序是否接受需通过页面或截图确认。仅支持 POST，空文本或含 NUL 的文本返回错误。旧 `/type` 保持逐字输入行为。
 
 HTTP 服务仅监听 `127.0.0.1:18888`：`GET /windows` 列出窗口，`GET /screenshot?window=active&save=true` 返回路径和坐标。`window` 可省略；不设 `save` 默认返回 PNG，`format=jpg` 返回 JPEG，`base64=true` 返回带图像数据的 JSON。二进制响应通过 `X-Screenshot-Left` / `X-Screenshot-Top` 返回桌面偏移。
+
+## 新机器部署
+
+使用 `Build-Package.ps1` 生成 `dist\DesktopAssistant-Windows-x64.zip`。发布包内置 .NET 8 Windows Desktop 运行时；在目标 Windows 管理员桌面解压后双击 `Install.cmd`，配置 SSH 公钥、登录启动任务和 PowerShell 快捷命令。截图默认写入当前用户的 LocalAppData，不要求 D 盘。
+
+完整安装、更新和卸载说明见 [deployment/README.md](deployment/README.md)。Home Assistant、AHK、实时翻译等机器专有配置不进入部署包；缺少壁灯配置时静默跳过。
 
 ## 游戏AHK映射
 
@@ -82,7 +88,7 @@ DesktopAssistant/
 ## 开发与发布
 
 ```powershell
-dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o ./publish
+.\Build-Package.ps1 -PublicKeyPath 'C:\path\to\controller.pub'
 ```
 
 ## 书房壁灯快捷键

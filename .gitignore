@@ -2,6 +2,9 @@
 bin/
 obj/
 publish/
+dist/
+artifacts/
+deployment/controller.pub
 
 # User-specific files
 *.user

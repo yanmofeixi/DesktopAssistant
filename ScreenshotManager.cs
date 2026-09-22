@@ -8,7 +8,9 @@ public sealed record ScreenshotCapture(byte[] Bytes, Rectangle Bounds, CaptureWi
 
 public class ScreenshotManager
 {
-    public const string SaveDirectory = @"D:\Temp\ScreenshotMonitoring";
+    public static readonly string SaveDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "DesktopAssistant", "Screenshots");
     public const int MaxRetainedCount = 10;
     private readonly object captureLock = new();
 

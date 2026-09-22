@@ -7,6 +7,11 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>True</UseWindowsForms>
     <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <Version>1.1.0</Version>
     <ApplicationIcon>icon.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -17,6 +22,7 @@
 
   <ItemGroup>
     <PackageReference Include="System.Management" Version="8.0.0" />
+    <Compile Remove="tests\**\*.cs" />
   </ItemGroup>
 
   <!-- 发布后自动清理 bin/obj -->
