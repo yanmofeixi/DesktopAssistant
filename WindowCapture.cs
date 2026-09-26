@@ -14,6 +14,9 @@ public sealed record CaptureWindow(IntPtr Hwnd, string Title, string ProcessName
         processId = ProcessId, minimized = Minimized,
         left = Bounds.Left, top = Bounds.Top, width = Bounds.Width, height = Bounds.Height
     };
+
+    public string Describe() => $"0x{Hwnd.ToInt64():X} {ProcessName} \"{Title}\" " +
+        (Minimized ? "minimized" : $"{Bounds.Left},{Bounds.Top} {Bounds.Width}x{Bounds.Height}");
 }
 
 public sealed class WindowSelectionException(string message, int statusCode,
@@ -75,7 +78,7 @@ public static class WindowCapture
         return windows;
     }
 
-    public static CaptureWindow Select(string selector)
+    public static CaptureWindow Select(string selector, bool allowMinimized = false)
     {
         selector = selector.Trim();
         var windows = List();
@@ -103,10 +106,10 @@ public static class WindowCapture
                 matches = windows.Where(w => w.Title.Contains(selector, StringComparison.OrdinalIgnoreCase)).ToArray();
         }
         if (matches.Length == 0)
-            throw new WindowSelectionException($"未找到窗口 '{selector}'；请用 shot -ListWindows 查看可用窗口。", 404);
+            throw new WindowSelectionException($"未找到窗口 '{selector}'；请用 /windows 查看可用窗口。", 404);
         if (matches.Length > 1)
             throw new WindowSelectionException($"'{selector}' 匹配多个窗口；请指定列表中的 handle。", 409, matches);
-        if (matches[0].Minimized)
+        if (matches[0].Minimized && !allowMinimized)
             throw new WindowSelectionException("目标窗口已最小化，请先恢复窗口。", 409, matches);
         return matches[0];
     }

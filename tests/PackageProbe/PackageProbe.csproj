@@ -3,14 +3,21 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
   </PropertyGroup>
   <ItemGroup>
+    <!-- UseWPF 会去掉隐式 System.IO（避免与 WPF Path 冲突），本项目不用 WPF 控件 -->
+    <Using Include="System.IO" />
     <Compile Include="..\..\ScreenshotManager.cs" Link="ScreenshotManager.cs" />
     <Compile Include="..\..\RemoteInputServer.cs" Link="RemoteInputServer.cs" />
     <Compile Include="..\..\WindowCapture.cs" Link="WindowCapture.cs" />
+    <Compile Include="..\..\RemoteCommands.cs" Link="RemoteCommands.cs" />
+    <Compile Include="..\..\CommandParameters.cs" Link="CommandParameters.cs" />
+    <Compile Include="..\..\InputSimulator.cs" Link="InputSimulator.cs" />
+    <Compile Include="..\..\UiAutomationReader.cs" Link="UiAutomationReader.cs" />
   </ItemGroup>
 </Project>

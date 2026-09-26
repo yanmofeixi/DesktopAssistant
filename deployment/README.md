@@ -26,7 +26,7 @@
 - 安装/启动 Windows OpenSSH Server，将 `sshd` 设为自动启动；保留已有 SSH 配置、主机密钥和其他公钥。
 - 把包内 `controller.pub` 加入当前账号实际使用的 authorized keys 文件，重复安装不重复添加。按照 Windows OpenSSH 的默认管理员配置，这通常是 `%ProgramData%\ssh\administrators_authorized_keys`，其公钥对使用该文件的管理员账号生效。
 - 新建的 SSH 防火墙规则默认只允许 `LocalSubnet`；已有其他 SSH 防火墙规则保留其原有范围。HTTP 服务继续只监听 `127.0.0.1:18888`，不开放 HTTP 入站端口。
-- 在当前用户的 Windows PowerShell 全主机 profile 中加载 `RemoteControl.ps1`，提供 `shot`、`paste`、`c`、`k` 等快捷命令。
+- 在当前用户的 Windows PowerShell 全主机 profile 中加载 `RemoteControl.ps1`，提供 `shot`、`txt`、`c`、`paste`、`k` 等快捷命令。
 - 创建 `DesktopAssistant-<用户SID>` 计划任务，在该用户登录时以最高权限启动，任务使用 **Interactive** 登录类型，操作真实登录桌面。安装结束也会尝试启动并检查 HTTP 状态。
 - 更新已有安装时备份旧程序、profile、授权公钥文件及其 ACL、旧任务定义。备份位于 `%LOCALAPPDATA%\DesktopAssistant\InstallBackups\`，按安装时间区分。
 
@@ -82,25 +82,20 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -SshRemote
 
 | 操作 | PowerShell 命令 |
 |---|---|
-| 当前窗口截图 | `shot -Window active` |
-| 全屏截图 / 窗口列表 | `shot` / `shot -ListWindows` |
-| 指定应用、标题或窗口句柄 | `shot -Window notepad` / `shot -Window '标题片段'` / `shot -Window 0x12345` |
-| 单击 / 双击 / 右键 / 移动 | `c 500 300` / `dc 500 300` / `rc 500 300` / `m 500 300` |
-| 向下 / 向上滚动 | `sc -240` / `sc 240` |
-| 中文、emoji、多行快速粘贴 | `paste '你好，Windows 👋'` |
-| 粘贴 UTF-8 文件 | `paste -File "$env:TEMP\input.txt"` |
-| 逐字输入（按需） | `t '你好'` |
-| 单键 / 组合键 | `k enter` / `k ctrl+w` / `k alt+tab` |
+| 截图并保存 / 窗口列表 | `shot active -MaxWidth 1280` / `shot -ListWindows` |
+| 读窗口文字 / 元素 / 网址 | `txt active` / `el active -Type button` / `url active` |
+| 点击坐标 / 按名称点击 | `c 500 300` / `c -Name 确定 -Type button` |
+| 滚动 / 按键 | `sc -240` / `k enter` / `k ctrl+w` |
+| 中文、emoji、多行快速粘贴 | `paste '你好，Windows 👋'` / `paste -File "$env:TEMP\input.txt"` |
 
-坐标与句柄为示例。窗口截图的 `(x,y)` 对应桌面绝对坐标 `(left+x, top+y)`，使用本次截图返回的偏移量。窗口截图反映屏幕上的实际可见区域，不自动激活或恢复窗口，遮挡也会出现在图中。
-
-`paste` 在登录桌面中写入剪贴板并发送 Ctrl+V，保留新剪贴板内容，不追加 Enter。先将输入焦点放到目标输入框；返回成功代表事件已发送，实际结果用截图确认。
-
-长文本优先从控制端通过标准输入原样发送：
+坐标与句柄为示例，坐标一律为桌面物理像素。控制端也可不经 PowerShell，直接通过 SSH 调用 `curl.exe` 访问 HTTP 接口，例如截图直接写到控制端文件、长文本经标准输入粘贴：
 
 ```bash
-ssh -T windows-new 'curl.exe --silent --show-error --fail-with-body -H "Content-Type: text/plain; charset=utf-8" --data-binary @- http://127.0.0.1:18888/paste' < /tmp/input.txt
+ssh windows-new 'curl.exe -s "http://127.0.0.1:18888/screenshot?window=active&maxWidth=1280"' > /tmp/w.png
+ssh windows-new 'curl.exe -s -H "Content-Type: text/plain; charset=utf-8" --data-binary @- http://127.0.0.1:18888/paste' < /tmp/input.txt
 ```
+
+全部操作（读文字、按名称点击、等待条件、批量执行等）见项目 [README](../README.md#ssh-远程操作)，或在目标机器执行 `curl.exe -s http://127.0.0.1:18888/help`。
 
 ## 更新与排查
 
