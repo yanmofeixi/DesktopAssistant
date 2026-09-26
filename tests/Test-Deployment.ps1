@@ -8,6 +8,10 @@ $old = "# existing key`r`nrestrict " + $key.Line + "`r`n"
 if ((Add-ControllerKeyText $old $key) -cne $old) { throw 'Existing key restrictions were changed.' }
 $first = Add-ControllerKeyText '# untouched comment' $key
 if ((Add-ControllerKeyText $first $key) -cne $first) { throw 'Duplicate public key was added.' }
+$rejected = $false
+try { $null = ConvertFrom-PublicKeyLine ('restrict ' + $key.Line) } catch { $rejected = $true }
+if (-not $rejected) { throw 'Pasted key with authorized_keys options was not rejected.' }
+if ((ConvertFrom-PublicKeyLine ("  " + $key.Line + "  ")).Blob -cne $key.Blob) { throw 'Pasted key with surrounding spaces was not accepted.' }
 $profile = "Write-Output 'existing profile'`r`n"
 $path = "C:\Program Files\Owner's tools\RemoteControl.ps1"
 $first = Add-DesktopProfileText $profile $path

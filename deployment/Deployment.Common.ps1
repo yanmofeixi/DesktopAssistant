@@ -4,7 +4,12 @@ function Read-ControllerPublicKey {
     param([Parameter(Mandatory)][string]$Path)
     $lines = @([IO.File]::ReadAllLines($Path) | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') })
     if ($lines.Count -ne 1) { throw 'controller.pub must contain exactly one OpenSSH public key.' }
-    $line = $lines[0].Trim()
+    return ConvertFrom-PublicKeyLine $lines[0]
+}
+
+function ConvertFrom-PublicKeyLine {
+    param([Parameter(Mandatory)][string]$Text)
+    $line = $Text.Trim()
     if ($line -notmatch '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521))\s+([A-Za-z0-9+/]+={0,2})(?:\s+.*)?$') {
         throw 'Expected a public .pub key; private keys and authorized_keys options are not accepted.'
     }
