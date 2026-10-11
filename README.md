@@ -11,7 +11,7 @@ Windows 系统托盘工具：显示器控制 + 游戏AHK自动启动 + 定时提
 | **书房壁灯快捷键** | 全局 `Ctrl+F1`：切换二楼书房壁灯，开灯亮度固定为 100% |
 | **提醒功能** | 读取桌面 ToDo.json，定时弹窗提醒 |
 | **空闲自动静音** | 检测到系统空闲 30 分钟自动静音，恢复操作后自动取消静音（可通过托盘菜单启用/禁用） |
-| **屏幕截图与远程控制** | 内置 HTTP 服务（端口 18888）：截图（区域、缩放）、读取窗口文字/元素/网址、按坐标或元素名称点击、粘贴与按键、等待条件、批量执行 |
+| **屏幕截图与远程控制** | 内置 HTTP 服务（端口 18888）：截图（区域、缩放）、读取窗口文字/元素/网址、按坐标或元素名称点击、粘贴与按键、等待条件、批量执行、在桌面会话中运行命令与启动程序、读取剪贴板 |
 
 ## SSH 远程操作
 
@@ -57,6 +57,9 @@ ssh windows-desktop 'curl.exe -s -H "Content-Type: text/plain; charset=utf-8" --
 | `sleep` | `ms` | 暂停 |
 | `batch` | POST JSON 数组，每项含 `op` 及其参数 | 依次执行，失败即停止并在 `details.completed` 返回已完成步骤；最后一步是未 `save` 的截图时响应就是图片 |
 | `status` | | 屏幕、光标、服务运行时间与最新截图路径 |
+| `run` | `cmd` 或 `file`（`args`）`cwd` `stdin` `timeout=120` `encoding=utf-8\|oem\|gbk` `max=200000` | 在登录桌面会话中运行并等待结束，返回 `exitCode`、`stdout`、`stderr`、`pid`、`seconds` |
+| `launch` | `file`（绝对路径）`args` `cwd` `windowTimeout=10` | 在桌面启动程序，不等待退出；返回实际路径、PID、会话、产品名、版本和主窗口句柄 |
+| `clipboard` | `format=text\|html\|files\|image` | 读桌面剪贴板；省略 `format` 时返回现有格式、文字、文件列表和图片尺寸的摘要 JSON |
 
 **窗口选择**：`window` 按 `active`、`0x` 十六进制句柄、程序名（可带 `.exe`）、完整标题、标题片段依次匹配。省略时截图为全屏，其余操作取前台窗口。多个窗口匹配时返回候选列表要求改用句柄；找不到、完全移出屏幕，或（除 `focus` 外）已最小化时报错。窗口截图截取屏幕上的可见矩形，不激活窗口，遮挡内容也会出现在图中。
 
@@ -67,6 +70,18 @@ ssh windows-desktop 'curl.exe -s -H "Content-Type: text/plain; charset=utf-8" --
 **按键**：组合键用 `+` 连接。查询串里的 `+` 会被解码成空格，服务把空格也当作分隔符。`+`、`,` 本身用键名 `plus`、`comma`，其他标点键名为 `minus` `period` `slash` `semicolon` `quote` `backquote` `bracketleft` `bracketright` `backslash`。
 
 **粘贴**：`paste` 在 STA 线程写入 Unicode 剪贴板再发送 `keys`（默认 `ctrl+v`；xterm 等网页终端用 `ctrl+shift+v`），支持中文、emoji、引号和换行。新内容保留在剪贴板中，不自动恢复，以免目标程序延迟读取时粘贴到旧内容；不追加 Enter。`text/plain` 请求体从不按 JSON 解析，粘贴以 `{` 开头的代码也安全。不要在 SSH 中用 `Set-Clipboard` 代替：SSH 会话的剪贴板与登录桌面不同。
+
+**运行命令**：SSH 用密钥登录时 Windows 拿不到用户密码，无法解开当前用户的 DPAPI 密钥，凭据管理器（Git Credential Manager、`gh` 等）在 SSH 会话中不可用；SSH 会话也不在登录桌面里。`run` 和 `launch` 由 DesktopAssistant 在登录桌面会话中创建进程，以上限制都不存在，不再需要借计划任务执行。子进程继承 DesktopAssistant 的管理员令牌和它启动时的环境变量。`cmd` 经 `cmd.exe /d /s /c` 执行并先切换到 UTF-8 代码页，适合 `cd /d 目录 && git push` 这类命令行；`file` + `args` 直接启动程序，不经过 cmd。标准输入在写入 `stdin`（如有）后立即关闭，等待输入的程序会立刻失败而不是挂起。非零退出码仍返回 200，以 `exitCode` 判断成败；超过 `timeout` 时结束整个进程树并返回 408，`details` 中带已有输出。输出默认按 UTF-8 解码，程序按系统代码页输出时用 `encoding=oem`；每路输出超过 `max` 字符时保留末尾。
+
+```bash
+ssh windows-desktop 'curl.exe -s --data-binary @- http://127.0.0.1:18888/run' <<'EOF'
+{"cmd":"git push origin HEAD","cwd":"C:\\Code\\TamperMonkeyScript","timeout":120}
+EOF
+```
+
+**启动程序**：`launch` 只接受存在的可执行文件绝对路径，不经过 Shell 关联，因此不会把网址或 `steam://` 之类的协议交给其他程序打开。工作目录默认为程序所在目录。返回的 `path` 是进程实际映像路径，`sessionId` 是所在登录会话；`windowTimeout` 秒内出现主窗口时返回其句柄，可直接用于其他操作的 `window` 参数。
+
+**读剪贴板**：`clipboard` 在 STA 线程读取登录桌面的剪贴板。`format=text` 和 `format=html` 返回纯文本（HTML 去掉 CF_HTML 头部），`format=files` 每行一个路径，`format=image` 返回 PNG；剪贴板中没有对应格式时返回 404。在浏览器中选中内容后复制，再用 `format=html` 读取，可以直接拿到网页片段的 HTML。
 
 **等待变化**：`change=1` 比较区域的 64 像素宽灰度缩略图，平均差异超过 `threshold`（0–255）即返回；光标闪烁、动画区域会误触发，应配合 `region` 限定范围。
 
@@ -85,6 +100,8 @@ ssh windows-desktop 'curl.exe -s -H "Content-Type: text/plain; charset=utf-8" --
 | 按键 | `k enter` / `k ctrl+w` / `k ctrl+m,m` |
 | 等待 | `waitfor -Text 完成 -Window chrome -Timeout 600` / `waitfor -Text 加载中 -Gone` / `waitfor -Change -Region 0,0,400,300` |
 | 批量 | `batch -File D:\Temp\steps.json` |
+| 在桌面会话运行命令 | `run 'git push' -Cwd C:\Code\TamperMonkeyScript` / `run 'python x.py' -Encoding oem -Timeout 600`（输出 stdout，stderr 黄色显示，`$LASTEXITCODE` 为命令退出码） |
+| 读剪贴板 | `getclip` / `getclip -Format html` / `getclip -Format files` |
 
 截图文件在 `%LOCALAPPDATA%\DesktopAssistant\Screenshots`，只保留最新 10 张。
 
@@ -117,6 +134,8 @@ DesktopAssistant/
  RemoteCommands.cs    # 远程控制操作实现（单次请求与 /batch 共用）
  CommandParameters.cs # 操作参数解析、结果与错误类型
  InputSimulator.cs    # 鼠标、键盘、剪贴板粘贴与窗口前台切换
+ ClipboardReader.cs   # 读取登录桌面剪贴板：文字、HTML、文件列表、图片
+ ProcessRunner.cs     # 在登录桌面会话中运行命令、启动程序
  UiAutomationReader.cs # UI Automation：窗口文字、可见元素、浏览器网址
  RemoteControl.ps1    # SSH 中使用的 PowerShell 快捷命令
  DesktopAssistant.csproj

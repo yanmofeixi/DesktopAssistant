@@ -198,6 +198,9 @@ namespace DesktopAssistant
                     res.Headers["X-Screenshot-Scale"] = capture.Scale.ToString("0.####", CultureInfo.InvariantCulture);
                     WriteBytes(res, capture.Bytes, image.Jpeg ? "image/jpeg" : "image/png", headOnly);
                     break;
+                case BinaryResult binary:
+                    WriteBytes(res, binary.Bytes, binary.ContentType, headOnly);
+                    break;
             }
         }
 

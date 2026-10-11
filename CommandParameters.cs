@@ -14,6 +14,7 @@ public abstract record CommandResult;
 public sealed record JsonResult(object Data) : CommandResult;
 public sealed record TextResult(string Text) : CommandResult;
 public sealed record ImageResult(ScreenshotCapture Capture, bool Jpeg) : CommandResult;
+public sealed record BinaryResult(byte[] Bytes, string ContentType) : CommandResult;
 
 /// <summary>Case-insensitive command arguments from a query string, JSON object or batch step.</summary>
 public sealed class CommandParameters

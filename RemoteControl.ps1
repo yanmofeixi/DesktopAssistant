@@ -121,6 +121,20 @@ function global:waitfor {
 function global:batch([Parameter(Mandatory = $true)][string]$File) {
     Invoke-DesktopAssistant batch -RawJson (Get-Content -LiteralPath $File -Raw -Encoding UTF8 -ErrorAction Stop) -TimeoutSec 3700
 }
+# Prints stdout, stderr in yellow, and sets $LASTEXITCODE to the command's exit code.
+function global:run {
+    param([Parameter(Mandatory = $true, Position = 0)][string]$Command, [string]$Cwd, [int]$Timeout = 120, [string]$Encoding)
+    $lines = Invoke-DesktopAssistant run @{ cmd = $Command; cwd = $Cwd; timeout = $Timeout; encoding = $Encoding } -TimeoutSec ($Timeout + 30)
+    if ($LASTEXITCODE -ne 0) { return }
+    $result = ($lines -join "`n") | ConvertFrom-Json
+    if ($result.stdout) { $result.stdout.TrimEnd() -split '\r?\n' }
+    if ($result.stderr) { Write-Host $result.stderr.TrimEnd() -ForegroundColor DarkYellow }
+    $global:LASTEXITCODE = $result.exitCode
+}
+# Not named clip: that would shadow Windows' clip.exe, which writes to the clipboard.
+function global:getclip([ValidateSet('text', 'html', 'files')][string]$Format = 'text') {
+    Invoke-DesktopAssistant clipboard @{ format = $Format }
+}
 
 # Only interactive SSH terminals get the cheat sheet; `ssh host 'powershell -Command ...'` stays quiet.
 if ($env:SSH_TTY) {
@@ -130,6 +144,7 @@ if ($env:SSH_TTY) {
     Write-Host ' txt [w] [-All] : 读可见文字；el [w] [-Name 文字] [-Type button] : 元素与坐标；url [w]'
     Write-Host ' c x y [-Shot] / c -Name 确定 [-Type button] / dc / rc / m x y / sc -240'
     Write-Host ' paste ''文字'' [-Keys ctrl+shift+v] / t ''逐字'' / k ctrl+m,m / waitfor -Text 完成 [-Gone] / batch -File steps.json'
+    Write-Host ' run ''git push'' [-Cwd 目录] : 在桌面会话运行（可用凭据管理器）；getclip [-Format html] : 读桌面剪贴板'
     Write-Host ''
 }
 #endregion

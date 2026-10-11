@@ -35,6 +35,13 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
         batch      POST JSON 数组，如 [{"op":"click","name":"确定"},{"op":"screenshot","maxWidth":1280}]
                    依次执行，任一步失败即停止；最后一步是未 save 的截图时响应就是图片
         status     屏幕与光标信息
+
+        run        cmd="git push" | file args  cwd stdin timeout=120 encoding=utf-8|oem|gbk max=200000
+                                                  在登录桌面会话中运行并等待结束，返回 exitCode、stdout、stderr；
+                                                  能用凭据管理器（git push、gh）；超时结束整个进程树并返回 408
+        launch     file（绝对路径） args cwd windowTimeout=10
+                                                  在桌面启动程序不等待，返回实际路径、PID、会话、版本和主窗口句柄
+        clipboard  format=text|html|files|image   读桌面剪贴板；省略 format 返回各格式摘要 JSON
         """;
 
     public CommandResult Execute(string op, CommandParameters p, JsonElement? batchSteps = null) => op switch
@@ -57,6 +64,9 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
         "wait" => Wait(p),
         "sleep" => Sleep(p),
         "batch" => Batch(batchSteps),
+        "run" => Run(p),
+        "launch" => Launch(p),
+        "clipboard" => ReadClipboard(p),
         _ => throw new CommandException($"未知操作 '{op}'；GET /help 查看全部操作。", 404)
     };
 
@@ -273,9 +283,9 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
             }
             switch (result)
             {
-                case ImageResult image when index == count:
-                    return image;
-                case ImageResult:
+                case ImageResult or BinaryResult when index == count:
+                    return result;
+                case ImageResult or BinaryResult:
                     throw new CommandException($"第 {index} 步：图片只能作为最后一步返回，中间截图请加 save=1。", 400, new { completed = results });
                 case TextResult text:
                     results.Add(new { op, text = text.Text });
@@ -287,6 +297,83 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
         }
         return Ok(new { status = "ok", results });
     }
+
+    private static CommandResult Run(CommandParameters p)
+    {
+        var startInfo = BuildStartInfo(p);
+        var encoding = ProcessRunner.ResolveEncoding(p.Get("encoding"));
+        startInfo.StandardOutputEncoding = encoding;
+        startInfo.StandardErrorEncoding = encoding;
+        startInfo.StandardInputEncoding = new System.Text.UTF8Encoding(false);
+        int timeoutSeconds = p.Int("timeout", 120, 1, 3600);
+        var outcome = ProcessRunner.Run(startInfo, p.Get("stdin"), TimeSpan.FromSeconds(timeoutSeconds),
+            p.Int("max", 200_000, 1000, 5_000_000));
+        var data = new
+        {
+            status = outcome.TimedOut ? "timeout" : "ok", action = "run", exitCode = outcome.ExitCode,
+            pid = outcome.Pid, seconds = outcome.Seconds, stdout = outcome.Stdout, stderr = outcome.Stderr
+        };
+        if (outcome.TimedOut)
+            throw new CommandException($"运行 {timeoutSeconds} 秒未结束，已结束整个进程树。", 408, data);
+        return Ok(data);
+    }
+
+    private static ProcessStartInfo BuildStartInfo(CommandParameters p)
+    {
+        var startInfo = p.Get("cmd") is { } commandLine
+            // chcp makes cmd built-ins such as dir print UTF-8 instead of the OEM code page.
+            ? new ProcessStartInfo("cmd.exe", $"/d /s /c \"chcp 65001 >nul & {commandLine}\"")
+            : new ProcessStartInfo(p.Get("file") ?? throw new CommandException("run 需要 cmd=命令行，或 file=程序（可加 args）。"),
+                p.Get("args") ?? "");
+        ApplyWorkingDirectory(startInfo, p);
+        return startInfo;
+    }
+
+    private static void ApplyWorkingDirectory(ProcessStartInfo startInfo, CommandParameters p)
+    {
+        if (p.Get("cwd") is not { } cwd) return;
+        if (!Directory.Exists(cwd)) throw new CommandException($"工作目录不存在：{cwd}");
+        startInfo.WorkingDirectory = cwd;
+    }
+
+    private static CommandResult Launch(CommandParameters p)
+    {
+        string file = p.Require("file", "要启动程序的绝对路径");
+        var startInfo = new ProcessStartInfo(file, p.Get("args") ?? "");
+        ApplyWorkingDirectory(startInfo, p);
+        var outcome = ProcessRunner.Launch(startInfo, TimeSpan.FromSeconds(p.Int("windowTimeout", 10, 0, 120)));
+        return Ok(new
+        {
+            status = "ok", action = "launch", pid = outcome.Pid, path = outcome.Path, sessionId = outcome.SessionId,
+            productName = outcome.ProductName, fileVersion = outcome.FileVersion,
+            window = outcome.MainWindow == IntPtr.Zero ? null : $"0x{outcome.MainWindow.ToInt64():X}",
+            title = outcome.MainWindowTitle
+        });
+    }
+
+    private static CommandResult ReadClipboard(CommandParameters p)
+    {
+        string? format = p.Get("format")?.ToLowerInvariant();
+        var clip = ClipboardReader.Read(includeImageBytes: format == "image");
+        return format switch
+        {
+            null => Ok(new
+            {
+                status = "ok", action = "clipboard",
+                formats = new[] { clip.Text != null ? "text" : null, clip.Html != null ? "html" : null,
+                    clip.Files != null ? "files" : null, clip.ImageSize != null ? "image" : null }.OfType<string>(),
+                text = clip.Text, htmlLength = clip.Html?.Length, files = clip.Files,
+                image = clip.ImageSize is { } size ? new { width = size.Width, height = size.Height } : null
+            }),
+            "text" => new TextResult(clip.Text ?? throw ClipboardMissing("文字")),
+            "html" => new TextResult(clip.Html ?? throw ClipboardMissing("HTML")),
+            "files" => new TextResult(string.Join("\n", clip.Files ?? throw ClipboardMissing("文件列表"))),
+            "image" => new BinaryResult(clip.ImagePng ?? throw ClipboardMissing("图片"), "image/png"),
+            _ => throw new CommandException("format 必须为 text、html、files 或 image。")
+        };
+    }
+
+    private static CommandException ClipboardMissing(string kind) => new($"剪贴板中没有{kind}。", 404);
 
     private Point? OptionalPoint(CommandParameters p, string xKey, string yKey)
     {
