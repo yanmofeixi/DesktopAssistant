@@ -53,6 +53,7 @@ namespace DesktopAssistant
             studyLightHotkey.Error += message =>
                 icon.ShowBalloonTip(5000, "二楼书房壁灯", message, ToolTipIcon.Warning);
             
+            UserActivityGuard.Start();
             reminderManager.Start();
             gameAhkManager.Start();
             idleMuteManager.Start();
@@ -93,7 +94,7 @@ namespace DesktopAssistant
             menu.Items.Add("-");
             menu.Items.Add("启动实时翻译", null, (_, _) => StartRealtimeSubtitle());
             menu.Items.Add("-");
-            menu.Items.Add("退出", null, (_, _) => { icon.Visible = false; studyLightHotkey?.Dispose(); gameAhkManager?.Stop(); idleMuteManager?.Stop(); screenshotManager?.Stop(); remoteInputServer?.Stop(); Application.Exit(); });
+            menu.Items.Add("退出", null, (_, _) => { icon.Visible = false; studyLightHotkey?.Dispose(); gameAhkManager?.Stop(); idleMuteManager?.Stop(); screenshotManager?.Stop(); remoteInputServer?.Stop(); UserActivityGuard.Stop(); Application.Exit(); });
 
             icon.MouseUp += (s, e) =>
             {

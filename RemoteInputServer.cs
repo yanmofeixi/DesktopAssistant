@@ -120,6 +120,10 @@ namespace DesktopAssistant
                 WriteResult(res, commands.Execute(op, parameters, batchSteps),
                     req.HttpMethod.Equals("HEAD", StringComparison.OrdinalIgnoreCase));
             }
+            catch (UserActiveException ex)
+            {
+                WriteUserActive(res, ex);
+            }
             catch (CommandException ex)
             {
                 WriteJson(res, new { status = "error", message = ex.Message, details = ex.Details }, (HttpStatusCode)ex.StatusCode);
@@ -202,6 +206,30 @@ namespace DesktopAssistant
                     WriteBytes(res, binary.Bytes, binary.ContentType, headOnly);
                     break;
             }
+        }
+
+        private const string UserActiveMessage =
+            "The user is currently using this PC. Wait and retry later; do not abandon the task. " +
+            "This is temporary: wait retry_after_seconds, then send the same request again.";
+        private const string UserActiveBatchMessage =
+            "The user is currently using this PC. Wait and retry later; do not abandon the task. " +
+            "This is temporary: wait retry_after_seconds, then resend only the remaining steps starting at batch.failed_step; " +
+            "the completed steps have already run.";
+
+        // 423 Locked 加 Retry-After：用户正在用电脑，agent 应等待后重试，而不是当作失败放弃
+        private static void WriteUserActive(HttpListenerResponse res, UserActiveException ex)
+        {
+            var state = ex.State;
+            res.Headers["Retry-After"] = state.RetryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+            WriteJson(res, new
+            {
+                status = "user_active",
+                retry_after_seconds = state.RetryAfterSeconds,
+                idle_seconds = state.IdleSeconds,
+                required_idle_seconds = state.RequiredIdleSeconds,
+                message = ex.BatchProgress == null ? UserActiveMessage : UserActiveBatchMessage,
+                batch = ex.BatchProgress
+            }, (HttpStatusCode)423);
         }
 
         private static void WriteJson(HttpListenerResponse res, object data, HttpStatusCode code = HttpStatusCode.OK)

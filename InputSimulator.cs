@@ -192,10 +192,12 @@ public static class InputSimulator
         });
     }
 
+    /// <summary>所有合成输入的唯一入口：切到输入桌面执行，并登记注入时间段，让用户活动判断排除这些输入。</summary>
     private static void OnInputDesktop(Action action)
     {
         lock (inputLock)
         {
+            UserActivityGuard.BeginSyntheticInput();
             IntPtr oldDesktop = IntPtr.Zero;
             IntPtr inputDesktop = OpenInputDesktop(0, false, DESKTOP_MAXIMUM_ALLOWED);
             bool switched = false;
@@ -212,6 +214,7 @@ public static class InputSimulator
             {
                 if (switched && oldDesktop != IntPtr.Zero) SetThreadDesktop(oldDesktop);
                 if (inputDesktop != IntPtr.Zero) CloseDesktop(inputDesktop);
+                UserActivityGuard.EndSyntheticInput();
             }
         }
     }

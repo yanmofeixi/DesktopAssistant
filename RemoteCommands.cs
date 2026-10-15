@@ -42,9 +42,29 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
         launch     file（绝对路径） args cwd windowTimeout=10
                                                   在桌面启动程序不等待，返回实际路径、PID、会话、版本和主窗口句柄
         clipboard  format=text|html|files|image   读桌面剪贴板；省略 format 返回各格式摘要 JSON
+
+        用户本人正在使用这台电脑（最近 N 秒内有键盘或鼠标输入，N 默认 10）时，读写界面的操作不执行，
+        返回 423 和 Retry-After：{"status":"user_active","retry_after_seconds":..}。这是暂时的，
+        等 retry_after_seconds 秒后重发同一请求，不要放弃任务。受影响：windows focus screenshot text elements url
+        click move drag scroll paste type key wait launch；batch 每步前都检查，被拒时只需重发剩下的步骤。
+        status help sleep run clipboard 不受影响。force=1 跳过检查，只在用户授权时使用。
+        N 在 %LOCALAPPDATA%\DesktopAssistant\settings.json 的 userIdleSeconds 设置，0 表示关闭。
         """;
 
-    public CommandResult Execute(string op, CommandParameters p, JsonElement? batchSteps = null) => op switch
+    // 会读取或操作桌面界面的操作：用户正在使用电脑时不执行
+    private static readonly HashSet<string> UiOperations =
+    [
+        "windows", "focus", "screenshot", "text", "elements", "url", "click", "move", "drag",
+        "scroll", "paste", "type", "key", "wait", "launch"
+    ];
+
+    public CommandResult Execute(string op, CommandParameters p, JsonElement? batchSteps = null)
+    {
+        if (UiOperations.Contains(op)) UserActivityGuard.EnsureIdle(p.Flag("force"));
+        return Dispatch(op, p, batchSteps);
+    }
+
+    private CommandResult Dispatch(string op, CommandParameters p, JsonElement? batchSteps) => op switch
     {
         "" or "help" => new TextResult(HelpText),
         "status" or "info" => Status(),
@@ -63,7 +83,7 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
         "key" => Key(p),
         "wait" => Wait(p),
         "sleep" => Sleep(p),
-        "batch" => Batch(batchSteps),
+        "batch" => Batch(p, batchSteps),
         "run" => Run(p),
         "launch" => Launch(p),
         "clipboard" => ReadClipboard(p),
@@ -75,12 +95,21 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
     private CommandResult Status()
     {
         Point cursor = InputSimulator.CursorPosition();
+        var activity = UserActivityGuard.Current();
         return Ok(new
         {
             status = "ok",
             port,
             uptimeSeconds = (int)(DateTime.Now - startTime).TotalSeconds,
             cursor = new { x = cursor.X, y = cursor.Y },
+            userActivity = new
+            {
+                active = activity.Active,
+                idleSeconds = activity.IdleSeconds,
+                requiredIdleSeconds = activity.RequiredIdleSeconds,
+                retryAfterSeconds = activity.RetryAfterSeconds,
+                secondsSinceSyntheticInput = UserActivityGuard.SecondsSinceSyntheticInput()
+            },
             screens = Screen.AllScreens.Select(s => new
             {
                 primary = s.Primary, x = s.Bounds.X, y = s.Bounds.Y, width = s.Bounds.Width, height = s.Bounds.Height
@@ -206,9 +235,13 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
             : p.Flag("change") ? ChangeCondition(p)
             : throw new CommandException("wait 需要 text=... 或 change=1。");
 
+        bool force = p.Flag("force");
         var elapsed = Stopwatch.StartNew();
-        while (!satisfied())
+        while (true)
         {
+            // 等待期间用户开始用电脑时，不再读界面，让 agent 稍后重发 wait
+            UserActivityGuard.EnsureIdle(force);
+            if (satisfied()) break;
             if (elapsed.Elapsed.TotalSeconds >= timeoutSeconds)
                 throw new CommandException($"等待 {timeoutSeconds} 秒后条件仍未满足。", 408);
             Thread.Sleep(intervalMs);
@@ -256,10 +289,12 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
         return Ok(new { status = "ok", action = "sleep", ms });
     }
 
-    private CommandResult Batch(JsonElement? steps)
+    private CommandResult Batch(CommandParameters request, JsonElement? steps)
     {
         if (steps is not { ValueKind: JsonValueKind.Array } array)
             throw new CommandException("POST /batch 的请求体必须是 JSON 数组，例如 [{\"op\":\"key\",\"combo\":\"ctrl+t\"}]。");
+        bool force = request.Flag("force");
+        UserActivityGuard.EnsureIdle(force);
         var results = new List<object>();
         int count = array.GetArrayLength();
         int index = 0;
@@ -268,12 +303,21 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
             index++;
             var p = new CommandParameters();
             p.MergeJson(step);
+            if (force) p.SetIfMissing("force", "1");
             string op = p.Get("op")?.ToLowerInvariant() ?? throw new CommandException($"第 {index} 步缺少 op。");
             if (op == "batch") throw new CommandException("batch 不能嵌套。");
             CommandResult result;
             try
             {
                 result = Execute(op, p);
+            }
+            catch (UserActiveException ex)
+            {
+                throw new UserActiveException(ex.State, new
+                {
+                    failed_step = index, op, completed_steps = index - 1, remaining_steps = count - index + 1,
+                    completed = results
+                });
             }
             catch (Exception ex)
             {

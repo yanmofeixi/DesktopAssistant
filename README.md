@@ -55,11 +55,21 @@ ssh windows-desktop 'curl.exe -s -H "Content-Type: text/plain; charset=utf-8" --
 | `key` | `combo` | `enter`、`ctrl+w`；逗号分隔依次按下，如 `ctrl+m,m` |
 | `wait` | `text`（`gone=1` `all=1` `window`）或 `change=1`（`window` `region` `threshold=3`）`timeout=300` `interval=1000` | 等文字出现/消失或画面变化，超时返回 408 |
 | `sleep` | `ms` | 暂停 |
-| `batch` | POST JSON 数组，每项含 `op` 及其参数 | 依次执行，失败即停止并在 `details.completed` 返回已完成步骤；最后一步是未 `save` 的截图时响应就是图片 |
-| `status` | | 屏幕、光标、服务运行时间与最新截图路径 |
+| `batch` | POST JSON 数组，每项含 `op` 及其参数；查询串可加 `force=1` | 依次执行，失败即停止并在 `details.completed` 返回已完成步骤；最后一步是未 `save` 的截图时响应就是图片 |
+| `status` | | 屏幕、光标、用户活动（`userActivity`）、服务运行时间与最新截图路径 |
 | `run` | `cmd` 或 `file`（`args`）`cwd` `stdin` `timeout=120` `encoding=utf-8\|oem\|gbk` `max=200000` | 在登录桌面会话中运行并等待结束，返回 `exitCode`、`stdout`、`stderr`、`pid`、`seconds` |
 | `launch` | `file`（绝对路径）`args` `cwd` `windowTimeout=10` | 在桌面启动程序，不等待退出；返回实际路径、PID、会话、产品名、版本和主窗口句柄 |
 | `clipboard` | `format=text\|html\|files\|image` | 读桌面剪贴板；省略 `format` 时返回现有格式、文字、文件列表和图片尺寸的摘要 JSON |
+
+**用户在用时暂停**：最近 10 秒内有用户本人的键盘或鼠标输入时，读写界面的操作（`windows` `focus` `screenshot` `text` `elements` `url` `click` `move` `drag` `scroll` `paste` `type` `key` `wait` `launch`）不执行，返回 HTTP 423 和 `Retry-After` 头：
+
+```json
+{"status":"user_active","retry_after_seconds":6,"idle_seconds":4.2,"required_idle_seconds":10,"message":"The user is currently using this PC. Wait and retry later; do not abandon the task. ..."}
+```
+
+这是临时状态：调用方等 `retry_after_seconds` 秒后重发同一请求，不要放弃任务。`retry_after_seconds` 为所需空闲秒数减去已空闲秒数后向上取整，用户在这期间又有操作时会再次返回 423。`status`、`help`、`sleep`、`run`、`clipboard` 不受影响，`status` 的 `userActivity` 给出当前判断。`batch` 在开始前和每一步之前检查；中途被拒时前面的步骤已经执行，响应带 `batch` 字段：`failed_step`（从 1 开始）、`op`、`completed_steps`、`remaining_steps` 和已完成步骤的结果 `completed`，重试时只发从 `failed_step` 开始的剩余步骤。`wait` 每次轮询前都检查。只有用户本人授权时才加 `force=1` 跳过检查；`batch` 的 `force=1` 写在查询串，作用于所有步骤。
+
+判断依据是 `GetLastInputInfo` 给出的登录桌面最后一次键鼠输入时间。本程序的合成输入都经过 `InputSimulator` 的同一个入口，注入期间及结束后 0.25 秒内的输入记为本程序的，不算用户在用；SSH 会话不产生桌面输入。所需空闲秒数由 `%LOCALAPPDATA%\DesktopAssistant\settings.json` 的 `userIdleSeconds` 设置（默认 10，`0` 关闭检查，保存后立即生效）。
 
 **窗口选择**：`window` 按 `active`、`0x` 十六进制句柄、程序名（可带 `.exe`）、完整标题、标题片段依次匹配。省略时截图为全屏，其余操作取前台窗口。多个窗口匹配时返回候选列表要求改用句柄；找不到、完全移出屏幕，或（除 `focus` 外）已最小化时报错。窗口截图截取屏幕上的可见矩形，不激活窗口，遮挡内容也会出现在图中。
 
@@ -134,6 +144,7 @@ DesktopAssistant/
  RemoteCommands.cs    # 远程控制操作实现（单次请求与 /batch 共用）
  CommandParameters.cs # 操作参数解析、结果与错误类型
  InputSimulator.cs    # 鼠标、键盘、剪贴板粘贴与窗口前台切换
+ UserActivityGuard.cs # 判断用户本人是否在用电脑，在用时界面操作返回 423
  ClipboardReader.cs   # 读取登录桌面剪贴板：文字、HTML、文件列表、图片
  ProcessRunner.cs     # 在登录桌面会话中运行命令、启动程序
  UiAutomationReader.cs # UI Automation：窗口文字、可见元素、浏览器网址
