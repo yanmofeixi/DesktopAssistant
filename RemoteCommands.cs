@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Drawing.Imaging;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Windows.Automation;
 
 namespace DesktopAssistant;
@@ -20,11 +21,22 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
         focus      window                         恢复最小化并切到前台
         screenshot window region=x,y,w,h maxWidth format=png|jpg save=1
                                                   默认返回图片；save=1 返回保存路径与坐标 JSON
-        text       window all=1 max=20000         读窗口文字，默认只读屏幕上可见的部分
-        elements   window name type=button,edit|all limit=200
-                                                  列出可见元素：类型 "名称" value="值" @中心坐标
+        text       window all=1 max=20000 grep=正则 tail=N
+                                                  读窗口文字，默认只读屏幕上可见的部分；grep/tail 在服务端过滤行
+        elements   window name type=button,edit|all limit=200 exact=1 state=1
+                                                  列出可见元素：类型 "名称" value="值" [状态] @中心坐标
         url        window                         浏览器当前网址
-        click      x y | name [type index window]  button=left|right|middle double=1 shot=1
+        click      x y | name [type index window exact=1]  button=left|right|middle double=1 shot=1
+        invoke     name [type index window exact=1]
+                                                  用 UI Automation 按下按钮、选中单选/标签、切换复选框，不动鼠标
+        setvalue   name text [type index window exact=1]
+                                                  用 ValuePattern 写入编辑框（不经剪贴板、不需焦点），返回读回的值
+        value      name [type index window exact=1]
+                                                  读一个元素的完整值和状态（elements 只显示前 100 字）
+        focused                                   当前焦点元素：类型、名称、完整值、状态，以及前台窗口
+        assert     foreground=窗口 | focusedType/focusedName/focusedValue/focusedValueContains |
+                   name [type index window exact=1] value/valueContains/state/gone=1 | text [window all=1 textGone=1]
+                                                  所有给出的条件都成立才返回 ok，否则 412；放在 batch 里可拦住后续步骤
         move       x y       drag x1 y1 x2 y2 duration       scroll delta [x y] horizontal=1
         paste      text keys=ctrl+v               经剪贴板一次粘贴；网页终端用 keys=ctrl+shift+v
         type       text                           逐字模拟按键（每字约 50ms）
@@ -46,7 +58,8 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
         用户本人正在使用这台电脑（最近 N 秒内有键盘或鼠标输入，N 默认 10）时，读写界面的操作不执行，
         返回 423 和 Retry-After：{"status":"user_active","retry_after_seconds":..}。这是暂时的，
         等 retry_after_seconds 秒后重发同一请求，不要放弃任务。受影响：windows focus screenshot text elements url
-        click move drag scroll paste type key wait launch；batch 每步前都检查，被拒时只需重发剩下的步骤。
+        click move drag scroll paste type key wait launch invoke setvalue value focused assert；
+        batch 每步前都检查，被拒时只需重发剩下的步骤。
         status help sleep run clipboard 不受影响。force=1 跳过检查，只在用户授权时使用。
         N 在 %LOCALAPPDATA%\DesktopAssistant\settings.json 的 userIdleSeconds 设置，0 表示关闭。
         """;
@@ -55,7 +68,7 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
     private static readonly HashSet<string> UiOperations =
     [
         "windows", "focus", "screenshot", "text", "elements", "url", "click", "move", "drag",
-        "scroll", "paste", "type", "key", "wait", "launch"
+        "scroll", "paste", "type", "key", "wait", "launch", "invoke", "setvalue", "value", "focused", "assert"
     ];
 
     public CommandResult Execute(string op, CommandParameters p, JsonElement? batchSteps = null)
@@ -75,6 +88,11 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
         "elements" => Elements(p),
         "url" => new TextResult(UiAutomationReader.ReadUrl(UiAutomationReader.ResolveWindow(p.Get("window")))),
         "click" => Click(p),
+        "invoke" => Invoke(p),
+        "setvalue" => SetValue(p),
+        "value" => Value(p),
+        "focused" => Focused(),
+        "assert" => UiAssertions.Assert(p),
         "move" => Move(p),
         "drag" => Drag(p),
         "scroll" => Scroll(p),
@@ -153,14 +171,70 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
     {
         var window = UiAutomationReader.ResolveWindow(p.Get("window"));
         string text = UiAutomationReader.ReadText(window, p.Flag("all"), p.Int("max", 20000, 100, 1_000_000));
-        return new TextResult($"[{window.ProcessName}] {window.Title}\n{text}");
+        return new TextResult($"[{window.ProcessName}] {window.Title}\n{FilterLines(text, p)}");
     }
 
     private static CommandResult Elements(CommandParameters p)
     {
         var window = UiAutomationReader.ResolveWindow(p.Get("window"));
-        var elements = UiAutomationReader.FindElements(window, p.Get("name"), p.Get("type"), p.Int("limit", 200, 1, 2000));
+        var elements = UiAutomationReader.FindElements(window, p.Get("name"), p.Get("type"), p.Int("limit", 200, 1, 2000),
+            p.Flag("exact"), p.Flag("state"));
         return new TextResult($"[{window.ProcessName}] {window.Title}\n" + string.Join("\n", elements.Select(e => e.Describe())));
+    }
+
+    /// <summary>grep keeps lines matching the regex (case-insensitive); tail keeps the last N lines.</summary>
+    private static string FilterLines(string text, CommandParameters p)
+    {
+        IEnumerable<string> lines = text.Split('\n');
+        if (p.Get("grep") is { } grep)
+        {
+            Regex pattern;
+            try { pattern = new Regex(grep, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2)); }
+            catch (ArgumentException ex) { throw new CommandException($"grep 不是合法的正则：{ex.Message}"); }
+            lines = lines.Where(line => pattern.IsMatch(line));
+        }
+        if (p.Int("tail") is int tail and > 0) lines = lines.TakeLast(tail);
+        return string.Join("\n", lines);
+    }
+
+    private static UiTarget FindTarget(CommandParameters p) =>
+        UiAutomationActions.Find(UiAutomationReader.ResolveWindow(p.Get("window")),
+            p.Require("name", "元素名称（取自 /elements）"), p.Get("type"), p.Int("index"), p.Flag("exact"));
+
+    private static CommandResult Invoke(CommandParameters p)
+    {
+        var target = FindTarget(p);
+        var (pattern, completed) = UiAutomationActions.Invoke(target.Element);
+        return Ok(new
+        {
+            status = "ok", action = "invoke", pattern, element = target.Describe(),
+            // Still running after 5 s, typically because the button opened a modal dialog.
+            pending = completed ? (bool?)null : true
+        });
+    }
+
+    private static CommandResult SetValue(CommandParameters p)
+    {
+        string text = p.Get("text") ?? throw new CommandException("缺少参数 text：要写入的内容。");
+        var target = FindTarget(p);
+        string readBack = UiAutomationActions.SetValue(target.Element, text);
+        if (readBack != text)
+            throw new CommandException("写入后读回的值与 text 不一致。", 412,
+                new { element = target.Describe(), expected = text, actual = readBack });
+        return Ok(new { status = "ok", action = "setvalue", element = target.Describe(), length = text.Length });
+    }
+
+    private static CommandResult Value(CommandParameters p)
+    {
+        var target = FindTarget(p);
+        return Ok(UiAutomationActions.Snapshot(target.Element));
+    }
+
+    private static CommandResult Focused()
+    {
+        var focused = UiAutomationActions.Focused();
+        var foreground = UiAutomationReader.ResolveWindow("active", allowMinimized: true);
+        return Ok(new { status = "ok", focused = UiAutomationActions.Snapshot(focused), window = foreground.Metadata });
     }
 
     private CommandResult Click(CommandParameters p)
@@ -171,7 +245,8 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
         UiElement? element = null;
         if (p.Get("name") is { } name)
         {
-            element = UiAutomationReader.FindOne(UiAutomationReader.ResolveWindow(p.Get("window")), name, p.Get("type"), p.Int("index"));
+            element = UiAutomationReader.FindOne(UiAutomationReader.ResolveWindow(p.Get("window")), name, p.Get("type"),
+                p.Int("index"), p.Flag("exact"));
             target = element.Center;
         }
         InputSimulator.Click(target, button, isDouble);
@@ -323,7 +398,9 @@ public sealed class RemoteCommands(ScreenshotManager screenshots, int port)
             {
                 int status = ex switch { CommandException c => c.StatusCode, WindowSelectionException w => w.StatusCode, _ => 500 };
                 if (status == 500) Logger.Error($"batch 第 {index} 步 {op} 失败", ex);
-                throw new CommandException($"第 {index} 步 {op} 失败：{ex.Message}", status, new { completed = results });
+                object? stepDetails = ex is CommandException { Details: { } inner } ? inner : null;
+                throw new CommandException($"第 {index} 步 {op} 失败：{ex.Message}", status,
+                    new { completed = results, step = stepDetails });
             }
             switch (result)
             {

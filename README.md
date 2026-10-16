@@ -45,10 +45,15 @@ ssh windows-desktop 'curl.exe -s -H "Content-Type: text/plain; charset=utf-8" --
 | `windows` | | 每行一个窗口：句柄、程序、标题、位置与尺寸 |
 | `focus` | `window` | 恢复最小化窗口并切到前台 |
 | `screenshot` | `window` `region=x,y,宽,高` `maxWidth` `format=png\|jpg` `save=1` | 默认返回图片；`save=1` 保存到截图目录并返回路径和坐标 JSON |
-| `text` | `window` `all=1` `max=20000` | 读窗口文字，默认只读屏幕上可见的部分 |
-| `elements` | `window` `name` `type=button,edit\|all` `limit=200` | 可见元素，每行 `类型 "名称" value="值" @中心x,y` |
+| `text` | `window` `all=1` `max=20000` `grep=正则` `tail=N` | 读窗口文字，默认只读屏幕上可见的部分；`grep` 只留匹配的行（不区分大小写），`tail` 只留最后 N 行 |
+| `elements` | `window` `name` `type=button,edit\|all` `limit=200` `exact=1` `state=1` | 可见元素，每行 `类型 "名称" value="值" @中心x,y`；`exact=1` 只要名称完全相同的，`state=1` 加上 `[selected]` `[on]` `[collapsed]` 等状态 |
 | `url` | `window` | 浏览器当前完整网址 |
 | `click` | `x y` 或 `name`（`type` `index` `window`）`button` `double=1` `shot=1` | 点击坐标，或按名称找到元素后点击其中心 |
+| `invoke` | `name`（`type` `index` `window` `exact=1`） | 经 UI Automation 按下按钮、选中单选项或标签页、切换复选框、展开/折叠，不动鼠标、不需要窗口在前台；返回所用 `pattern`；5 秒未返回（如按钮弹出模态对话框）时带 `pending:true` |
+| `setvalue` | `name` `text`（`type` `index` `window` `exact=1`） | 经 ValuePattern 替换编辑框内容，不经剪贴板、不需焦点；读回与 `text` 不一致时返回 412 |
+| `value` | `name`（`type` `index` `window` `exact=1`） | 一个元素的类型、名称、完整值（`elements` 只显示前 100 字）、状态、是否有焦点、中心坐标 |
+| `focused` | | 当前键盘焦点元素（同 `value` 的字段）和前台窗口 |
+| `assert` | `foreground=窗口`；`focusedType` `focusedName` `focusedValue` `focusedValueContains`；`name`（`type` `index` `window` `exact=1`）加 `value` `valueContains` `state` 或 `gone=1`；`text`（`window` `all=1` `textGone=1`） | 给出的条件全部成立才返回 ok，否则 412，`details.failed` 列出每项的期望和实际值。放在 `batch` 里时后续步骤不会执行，适合在按键、粘贴、回车前确认窗口和焦点 |
 | `move` / `drag` / `scroll` | `x y` / `x1 y1 x2 y2 duration` / `delta`（`x y` `horizontal=1`） | 移动、拖拽、滚轮（正数向上，一格约 120） |
 | `paste` | `text` `keys=ctrl+v` | 经桌面剪贴板一次粘贴；`text` 也可作为 `text/plain` 请求体 |
 | `type` | `text` | 逐字模拟 Unicode 按键，每字约 50ms |
@@ -61,7 +66,7 @@ ssh windows-desktop 'curl.exe -s -H "Content-Type: text/plain; charset=utf-8" --
 | `launch` | `file`（绝对路径）`args` `cwd` `windowTimeout=10` | 在桌面启动程序，不等待退出；返回实际路径、PID、会话、产品名、版本和主窗口句柄 |
 | `clipboard` | `format=text\|html\|files\|image` | 读桌面剪贴板；省略 `format` 时返回现有格式、文字、文件列表和图片尺寸的摘要 JSON |
 
-**用户在用时暂停**：最近 10 秒内有用户本人的键盘或鼠标输入时，读写界面的操作（`windows` `focus` `screenshot` `text` `elements` `url` `click` `move` `drag` `scroll` `paste` `type` `key` `wait` `launch`）不执行，返回 HTTP 423 和 `Retry-After` 头：
+**用户在用时暂停**：最近 10 秒内有用户本人的键盘或鼠标输入时，读写界面的操作（`windows` `focus` `screenshot` `text` `elements` `url` `click` `move` `drag` `scroll` `paste` `type` `key` `wait` `launch` `invoke` `setvalue` `value` `focused` `assert`）不执行，返回 HTTP 423 和 `Retry-After` 头：
 
 ```json
 {"status":"user_active","retry_after_seconds":6,"idle_seconds":4.2,"required_idle_seconds":10,"message":"The user is currently using this PC. Wait and retry later; do not abandon the task. ..."}
@@ -75,7 +80,7 @@ ssh windows-desktop 'curl.exe -s -H "Content-Type: text/plain; charset=utf-8" --
 
 **坐标**：一律为桌面物理像素。截图响应头 `X-Screenshot-Left`、`X-Screenshot-Top`、`X-Screenshot-Scale` 给出换算：桌面坐标 = 偏移 + 图像坐标 / scale。`click`、`move`、`drag`、`scroll` 加 `shot=1` 时，`x`、`y` 直接取上一张返回截图上的像素，由服务按该图换算。
 
-**文字读取**基于 Windows UI Automation。Chromium 浏览器在首次被访问时才构建网页的辅助功能树，服务查不到网页文档时会等待 1 秒重试一次。`text` 去掉嵌入对象占位符并压缩空行。能读多少取决于程序是否提供辅助功能数据：浏览器和使用标准控件的程序（如微信的会话列表、聊天内容，以 `listitem` 形式出现）可读；自绘界面（如 Directory Opus 文件列表）、游戏和 canvas 绘制的内容读不到，需要截图后按坐标点击。本地程序没有网页文档，`text` 只能按树的顺序列出元素，读内容时优先用 `elements` 指定 `type`。`click` 的 `name` 先找名称完全相同的元素，再找名称或值包含该文字的元素；匹配多个时返回 409 和候选列表，用 `type` 或从 0 开始的 `index` 区分。
+**文字读取**基于 Windows UI Automation。Chromium 浏览器在首次被访问时才构建网页的辅助功能树，服务查不到网页文档时会等待 1 秒重试一次。`text` 去掉嵌入对象占位符并压缩空行。能读多少取决于程序是否提供辅助功能数据：浏览器和使用标准控件的程序（如微信的会话列表、聊天内容，以 `listitem` 形式出现）可读；自绘界面（如 Directory Opus 文件列表）、游戏和 canvas 绘制的内容读不到，需要截图后按坐标点击。本地程序没有网页文档，`text` 只能按树的顺序列出元素，读内容时优先用 `elements` 指定 `type`。`click`、`invoke`、`setvalue`、`value` 的 `name` 先找名称完全相同的元素（不区分大小写、忽略首尾空白），再找名称或值包含该文字的元素；加 `exact=1` 时只接受名称完全相同的。匹配多个时返回 409 和候选列表，用 `type` 或从 0 开始的 `index` 区分。`batch` 中某步失败时，`details.step` 带该步自己的详情（如 `assert` 的 `failed`）。
 
 **按键**：组合键用 `+` 连接。查询串里的 `+` 会被解码成空格，服务把空格也当作分隔符。`+`、`,` 本身用键名 `plus`、`comma`，其他标点键名为 `minus` `period` `slash` `semicolon` `quote` `backquote` `bracketleft` `bracketright` `backslash`。
 

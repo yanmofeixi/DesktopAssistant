@@ -4,12 +4,13 @@ using System.Windows.Automation;
 
 namespace DesktopAssistant;
 
-public sealed record UiElement(string Type, string Name, string Value, Point Center, bool Enabled)
+public sealed record UiElement(string Type, string Name, string Value, Point Center, bool Enabled, string? State = null)
 {
     public string Describe()
     {
         string line = $"{Type} \"{Shorten(Name)}\"";
         if (Value.Length > 0 && Value != Name) line += $" value=\"{Shorten(Value)}\"";
+        if (State != null) line += $" [{State}]";
         if (!Enabled) line += " disabled";
         return line + $" @{Center.X},{Center.Y}";
     }
@@ -63,17 +64,23 @@ public static class UiAutomationReader
         });
     }
 
-    public static IReadOnlyList<UiElement> FindElements(CaptureWindow window, string? name, string? types, int limit) =>
-        WithPhysicalPixels(() => ListElements(AutomationElement.FromHandle(window.Hwnd), name, types, limit));
+    public static IReadOnlyList<UiElement> FindElements(CaptureWindow window, string? name, string? types, int limit,
+        bool exact = false, bool withState = false) =>
+        WithPhysicalPixels(() => ListElements(AutomationElement.FromHandle(window.Hwnd), name, types, limit, exact, withState));
 
-    /// <summary>Exact name matches win over substring matches; ambiguity is an error unless index is given.</summary>
-    public static UiElement FindOne(CaptureWindow window, string name, string? types, int? index)
+    /// <summary>
+    /// Exact name matches win over substring matches (exact=true accepts only names equal
+    /// to <paramref name="name"/>); ambiguity is an error unless index is given.
+    /// </summary>
+    public static UiElement FindOne(CaptureWindow window, string name, string? types, int? index, bool exact = false)
     {
         var matches = FindElements(window, name, types, 500);
-        var exact = matches.Where(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).ToList();
-        var pool = exact.Count > 0 ? exact : matches.ToList();
+        var exactMatches = matches.Where(e => IsExactName(e.Name, name)).ToList();
+        var pool = exact || exactMatches.Count > 0 ? exactMatches : matches.ToList();
         if (pool.Count == 0)
-            throw new CommandException($"窗口中没有名称或值包含 '{name}' 的可见元素；可用 /elements 查看。", 404);
+            throw new CommandException(exact
+                ? $"窗口中没有名称恰为 '{name}' 的可见元素；可用 /elements 查看。"
+                : $"窗口中没有名称或值包含 '{name}' 的可见元素；可用 /elements 查看。", 404);
         if (index.HasValue)
             return index.Value >= 0 && index.Value < pool.Count
                 ? pool[index.Value]
@@ -113,7 +120,12 @@ public static class UiAutomationReader
         return root.FindAll(TreeScope.Subtree, DocumentCondition);
     }
 
-    private static List<UiElement> ListElements(AutomationElement root, string? name, string? types, int limit)
+    /// <summary>Names compare case-insensitively and ignoring surrounding whitespace, as listings show them.</summary>
+    internal static bool IsExactName(string elementName, string name) =>
+        elementName.Trim().Equals(name.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private static List<UiElement> ListElements(AutomationElement root, string? name, string? types, int limit,
+        bool exact = false, bool withState = false)
     {
         var cache = new CacheRequest { AutomationElementMode = AutomationElementMode.None };
         cache.Add(AutomationElement.NameProperty);
@@ -121,6 +133,12 @@ public static class UiAutomationReader
         cache.Add(AutomationElement.BoundingRectangleProperty);
         cache.Add(AutomationElement.IsEnabledProperty);
         cache.Add(ValuePattern.ValueProperty);
+        if (withState)
+        {
+            cache.Add(SelectionItemPattern.IsSelectedProperty);
+            cache.Add(TogglePattern.ToggleStateProperty);
+            cache.Add(ExpandCollapsePattern.ExpandCollapseStateProperty);
+        }
 
         AutomationElementCollection found;
         using (cache.Activate())
@@ -134,17 +152,30 @@ public static class UiAutomationReader
             string elementName = element.Cached.Name?.Trim() ?? "";
             string value = (element.GetCachedPropertyValue(ValuePattern.ValueProperty) as string)?.Trim() ?? "";
             if (elementName.Length == 0 && value.Length == 0) continue;
-            if (name != null && !elementName.Contains(name, StringComparison.OrdinalIgnoreCase) &&
+            if (name != null && exact && !IsExactName(elementName, name)) continue;
+            if (name != null && !exact && !elementName.Contains(name, StringComparison.OrdinalIgnoreCase) &&
                 !value.Contains(name, StringComparison.OrdinalIgnoreCase)) continue;
             string type = element.Cached.ControlType.ProgrammaticName.Replace("ControlType.", "").ToLowerInvariant();
             var center = new Point((int)(rect.Left + rect.Width / 2), (int)(rect.Top + rect.Height / 2));
-            elements.Add(new UiElement(type, elementName, value, center, element.Cached.IsEnabled));
+            string? state = withState ? CachedState(element) : null;
+            elements.Add(new UiElement(type, elementName, value, center, element.Cached.IsEnabled, state));
             if (elements.Count >= limit) break;
         }
         return elements;
     }
 
-    private static Condition ElementCondition(string? types)
+    private static string? CachedState(AutomationElement element)
+    {
+        if (element.GetCachedPropertyValue(SelectionItemPattern.IsSelectedProperty, true) is bool selected)
+            return selected ? "selected" : "unselected";
+        if (element.GetCachedPropertyValue(TogglePattern.ToggleStateProperty, true) is ToggleState toggle)
+            return UiAutomationActions.Describe(toggle);
+        if (element.GetCachedPropertyValue(ExpandCollapsePattern.ExpandCollapseStateProperty, true) is ExpandCollapseState expand)
+            return UiAutomationActions.Describe(expand);
+        return null;
+    }
+
+    internal static Condition ElementCondition(string? types)
     {
         Condition visible = new PropertyCondition(AutomationElement.IsOffscreenProperty, false);
         if (types?.Trim().ToLowerInvariant() == "all") return visible;
@@ -180,7 +211,7 @@ public static class UiAutomationReader
     }
 
     // Match screenshot and mouse coordinates, which are physical pixels.
-    private static T WithPhysicalPixels<T>(Func<T> action)
+    internal static T WithPhysicalPixels<T>(Func<T> action)
     {
         IntPtr previous = WindowCapture.SetThreadDpiAwarenessContext(new IntPtr(-4));
         try { return action(); }
